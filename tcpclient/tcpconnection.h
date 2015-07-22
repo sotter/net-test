@@ -1,12 +1,12 @@
 /*****************************************************************************
- Name        : tcpserver.h
+ Name        : tcpconnection.h
  Author      : sotter
- Date        : 2015年7月10日
- Description : 简单的TCPSERVER，专为测试使用
+ Date        : 2015年7月21日
+ Description :
  ******************************************************************************/
 
-#ifndef LIBNETWORK_1_0_TEST_TESTSERVER_TCPSERVER_H_
-#define LIBNETWORK_1_0_TEST_TESTSERVER_TCPSERVER_H_
+#ifndef LIBNETWORK_1_0_TEST_TESTSERVER_TCPCONNECTION_H_
+#define LIBNETWORK_1_0_TEST_TESTSERVER_TCPCONNECTION_H_
 
 #include <set>
 #include <sys/socket.h>
@@ -19,7 +19,9 @@
 
 namespace cppnetwork
 {
+
 class Select;
+
 class TcpConnection;
 
 class SockEventHandler
@@ -33,6 +35,7 @@ class Select
 {
 public:
 	Select();
+
 	~Select();
 
 	bool init();
@@ -59,6 +62,13 @@ private:
 	fd_set _write_fds_in[1024];
 };
 
+enum
+{
+	CLOSED = 0,
+	CONNECTING = 1,
+	CONNECTED = 2
+};
+
 class TcpConnection : public SockEventHandler
 {
 public:
@@ -67,19 +77,24 @@ public:
 
 	virtual ~TcpConnection();
 
-	bool init(const char *host, unsigned short port);
+	bool init();
 
-	void dispath();
-
-	virtual void on_read_event(int fd);
-
-	virtual void on_write_event(int fd);
+	//默认3秒钟连接超时
+	bool connect(const char *host, unsigned short port, int timeout = 3000);
 
 	virtual void on_conn(int fd);
 
 	virtual void on_read(int fd, const char *data, int len);
 
 	virtual void on_close(int fd);
+
+public:
+
+	void dispath();
+
+	virtual void on_read_event(int fd);
+
+	virtual void on_write_event(int fd);
 
 	int read(int fd);
 
@@ -88,14 +103,10 @@ public:
 	void event_loop();
 
 private:
-
-	bool listen();
-
 	bool set_address(const char *host, unsigned short port);
-
 private:
 
-	int _server_fd;
+	int _conn_fd;
 
 	std::set<int> _cient_fds;
 

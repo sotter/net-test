@@ -1,9 +1,9 @@
 # Define source files
-CPP_SRCS = tcpserver.cpp main.cpp
+CPP_SRCS = tcpconnection.cpp main.cpp
 
 ###CPP_SRCS = 
 
-BIN = tcpserver
+BIN = tcpconnect
 
 DYNAMIC_LIB = 
 

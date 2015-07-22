@@ -4,16 +4,15 @@ Author      : sotter
 Date        : 2015年7月13日
 Description : 
 ******************************************************************************/
-#include "tcpserver.h"
+#include "tcpconnection.h"
 
 int main()
 {
 	cppnetwork::TcpConnection tcpserver;
-	tcpserver.init("127.0.0.1", 7001);
-	tcpserver.dispath();
+	tcpserver.init();
+	tcpserver.connect("127.0.0.1", 7001);
 
-	sleep(500);
-
+	sleep(50);
 	return 0;
 }
 

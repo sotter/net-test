@@ -15,12 +15,13 @@
 #include <errno.h>
 #include <string.h>
 
-#include "tcpserver.h"
+#include "tcpconnection.h"
 
 using namespace std;
 
 namespace cppnetwork
 {
+
 static std::string addr2string(struct sockaddr_in &addr);
 static std::string getsockaddr(int fd);
 static std::string getpeeraddr(int fd);
@@ -36,20 +37,20 @@ static std::string addr2string(struct sockaddr_in &addr)
 	return dest;
 }
 
-static std::string getsockaddr(int fd)
-{
-	struct sockaddr_in address;
-
-	memset(&address, 0, sizeof(address));
-	unsigned int len = sizeof(address);
-	if (getsockname(fd, (struct sockaddr*) &address, &len) != 0)
-	{
-		printf("getsockname error %s \n", strerror(errno));
-		return "";
-	}
-
-	return addr2string(address);
-}
+//static std::string getsockaddr(int fd)
+//{
+//	struct sockaddr_in address;
+//
+//	memset(&address, 0, sizeof(address));
+//	unsigned int len = sizeof(address);
+//	if (getsockname(fd, (struct sockaddr*) &address, &len) != 0)
+//	{
+//		printf("getsockname error %s \n", strerror(errno));
+//		return "";
+//	}
+//
+//	return addr2string(address);
+//}
 
 static std::string getpeeraddr(int fd)
 {
@@ -77,29 +78,96 @@ static int setnonblocking(int fd)
 
 TcpConnection::TcpConnection()
 {
-	_server_fd = -1;
+	_conn_fd = -1;
 }
 
 TcpConnection::~TcpConnection()
 {
 	_select.stop();
-	if(_server_fd > 0)
+	if(_conn_fd > 0)
 	{
-		close(_server_fd);
-		_server_fd = -1;
+		close(_conn_fd);
+		_conn_fd = -1;
 	}
 }
 
-bool TcpConnection::init(const char *host, unsigned short port)
+bool TcpConnection::init()
 {
-	if(!set_address(host, port))
-		return false;
-	if(!listen())
-		return false;
-
-	_select.add_event(_server_fd, true, false);
-
+	dispath();
 	return true;
+}
+
+bool TcpConnection::connect(const char *host, unsigned short port, int timeout)
+{
+	if(! set_address(host, port))
+	{
+		return false;
+	}
+
+	if(_conn_fd > 0)
+	{
+		::close(_conn_fd);
+		_conn_fd = -1;
+	}
+
+	_conn_fd = socket(AF_INET, SOCK_STREAM, 0);
+	if(_conn_fd < 0)
+	{
+		return false;
+	}
+
+	setnonblocking(_conn_fd);
+	int ret = ::connect(_conn_fd, (struct sockaddr*) &_address, sizeof(_address)); //connect连接服务端
+	if (ret == 0)
+	{
+		printf("connect %s %d success\n", host, port);
+		return true;
+	}
+	else if (errno != EINPROGRESS)
+	{
+		printf("connect fail errno:%s\n", strerror(errno));
+		return false;
+	}
+
+	fd_set writefds;
+    FD_ZERO(&writefds);
+	FD_SET(_conn_fd, &writefds);
+
+	struct timeval tmout;
+	tmout.tv_sec = timeout / 1000;
+	tmout.tv_usec = (timeout % 1000) * 1000;
+	ret = select(_conn_fd + 1, NULL, &writefds, NULL, &tmout); //select监听sockfd上在超时时间timeout内是否可写
+	if (ret <= 0)
+	{
+		printf("select ret:%d\n", ret);
+		//若可写事件没有发生则连接超时，返回-1
+		return false;
+	}
+
+	//开始检测connect返回结果
+	int error = 0;
+	socklen_t length = sizeof(error);
+	if (getsockopt(_conn_fd, SOL_SOCKET, SO_ERROR, &error, &length) < 0)
+	{
+		printf("getsockopt fail:%s\n", strerror(errno));
+		return false;
+	}
+	else if(error > 0)
+	{
+		printf("connect after select fail:%s\n", strerror(error));
+		return false;
+	}
+	else if (error == 0)
+	{
+		printf("connect %s %d, success\n", host, port);
+		_select.add_event(_conn_fd, true, false);
+		return true;
+	}
+	else
+	{
+		printf("###### 不能跑到这！！！！########\n");
+		return false;
+	}
 }
 
 void *thread_fun(void *arg)
@@ -122,39 +190,6 @@ void TcpConnection::dispath()
 void TcpConnection::event_loop()
 {
 	_select.event_loop(this);
-}
-
-bool TcpConnection::listen()
-{
-	_server_fd = socket(AF_INET, SOCK_STREAM, 0);
-
-	if(_server_fd < 0)
-	{
-		printf("listen socket error:%s \n", strerror(errno));
-		return false;
-	}
-
-	int reuse = 1;
-
-	setsockopt(_server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(int)); // optional, but recommended
-	if (::bind(_server_fd, (struct sockaddr *) &_address, sizeof(_address)) < 0)
-	{
-		printf("tcp server bind error :%s \n", strerror(errno));
-		fflush(stdout);
-		return false;
-	}
-
-	if (::listen(_server_fd, 10) < 0)
-	{
-		printf("tcp server listen error : %s\n", strerror(errno));
-		return false;
-	}
-
-//	setnonblocking(_server_fd);
-
-	printf("tcp server listen %s \n", getsockaddr(_server_fd).c_str());
-
-	return true;
 }
 
 bool TcpConnection::set_address(const char *host, unsigned short port)
@@ -211,11 +246,11 @@ bool TcpConnection::set_address(const char *host, unsigned short port)
 
 void TcpConnection::on_read_event(int fd)
 {
-	if(fd == _server_fd)
+	if(fd == _conn_fd)
 	{
 		struct sockaddr_in client_addr;
 		int len = sizeof(client_addr);
-		int fd = ::accept(_server_fd, (struct sockaddr*)&client_addr, (socklen_t*)&len);
+		int fd = ::accept(_conn_fd, (struct sockaddr*)&client_addr, (socklen_t*)&len);
 		if(fd > 0)
 		{
 			printf("on connect from %s fd:%d \n", addr2string(client_addr).c_str(), fd);
